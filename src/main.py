@@ -366,7 +366,7 @@ class App:
     def __init__(self): 
         # Initalize Pygame only if needed... will run this function again upon resets
         #if not pg.get_init(): 
-        self.pc = PygameContext((WIDTH, HEIGHT), 'Micro Jam - Winter / Constantly Overworked', screen_info_pkg=False)
+        self.pc = PygameContext((WIDTH, HEIGHT), 'Snowball Effect - GJ Version', icon_path='assets/icon-1024.png', screen_info_pkg=False)
         self.level_name = None
         self.reset()
 
