@@ -11,6 +11,7 @@ from toolshed.window import PygameContext
 from toolshed.font import FontSpriteWriter, Dialogue
 from toolshed.vector import Vector
 from toolshed.particles import ParticleManager, PulseParticle, CircParticle, EllipseParticle
+from toolshed.mouse import Mouse
 
 from utils import *
 
@@ -353,61 +354,24 @@ def update_camera_and_player_pos(c: Camera, p: Player):
 
 APP_INITIALIZED = False
 
-class App: 
-    class State: 
-        Menu = 'Menu'
-        Setup = 'Setup'
-        Lore = 'Lore'
-        Running = 'Running'
-        Gameover = 'Gameover'
-        Win = 'Win'
-        Editing = 'Editing'
+class GameState: 
+    Menu = 'Menu'
+    Setup = 'Setup'
+    Lore = 'Lore'
+    Running = 'Running'
+    Gameover = 'Gameover'
+    Win = 'Win'
+    Editing = 'Editing'
 
-    def __init__(self): 
-        # Initalize Pygame only if needed... will run this function again upon resets
-        #if not pg.get_init(): 
-        self.pc = PygameContext((WIDTH, HEIGHT), 'Snowball Effect - GJ Version', icon_path='assets/icon-1024.png', screen_info_pkg=False)
-        self.level_name = None
-        self.reset()
-
-    def init_lore(self): 
-        self.state = App.State.Lore 
-        self.lore_idx = 0
-        self.lore_played = True
-
-    def load_level(self, name): 
-        self.level_name = name
-        level = levels[name]
-        cols, rows = level['grid_dims']
-        player_pos = grid_index_to_coords_centered(level['player_pos'], CELL_W)
-        
-        self.grid = Grid(cols=cols, rows=rows, debug=False)
-        self.camera = Camera((player_pos[0] - WIDTH//2, player_pos[1] - HEIGHT//2), self.grid.get_dims())
-        self.player = Player(player_pos, self.camera, self.grid.get_dims_pixels(), speed=1) 
-
-        possible_items = [ ASN.Scarf, ASN.Hat, ASN.Buttons, ASN.Carrot, ASN.Coal ]
-        for i in range(5): 
-            item_type = choice(possible_items)
-            possible_items.remove(item_type)
-            self.items.append(
-                Item(grid_index_to_coords_centered(level['items'][i], CELL_W), asset=self.am.get_sprite(item_type))
-            )
-
-        trees = [ ASN.Tree1, ASN.Tree2, ASN.Tree3 ]
-        self.obstacles = [
-            Obstacle(grid_index_to_coords_centered(pos, CELL_W), self.am.get_sprite(choice(trees))) 
-            for pos in level['obstacles'] 
-        ]
-        self.start_time = time() 
-        self.last_updated_time = self.start_time
-        self.state = App.State.Setup
-
-    def reset(self): 
-        level_name = self.level_name
-        
-        atlas = pg.image.load('assets/atlas.png').convert_alpha()
-        
+class Game: 
+    def __init__(self, pm: ParticleManager): 
+        self.running = True 
         self.state = App.State.Menu
+
+        # particles vars 
+        self.pm = pm
+
+        # lore vars
         self.lore_played = False
         self.lore_idx = None 
         self.lore = [
@@ -428,13 +392,12 @@ class App:
         self.big_fsr = FontSpriteWriter(big_font, 12, 12)
     
         # assets
+        atlas = pg.image.load('assets/atlas.png').convert_alpha()
         self.am = AtlasManager(atlas, atlas_offset)
         self.sm: SceneManager = init_ui(self.fsr, self.am.get_atlas())
-        
-        self.running = True
-        self.pm = ParticleManager()
 
         # game vars
+        self.level_name = None
         self.camera = None
         self.grid = None 
         self.player = None 
@@ -445,60 +408,36 @@ class App:
         self.snow_collected = 0 
         self.damaged_count = 0
 
-        self.state = App.State.Menu
-
-        # self.load_level('main')
+        # editor vars
         self.picked = []
-        debug['state'] = self.state
 
-        APP_INITIALIZED = True
+    def init_lore(self): 
+        self.state = App.State.Lore 
+        self.lore_idx = 0
+        self.lore_played = True
 
-        if level_name is not None: 
-            self.load_level(level_name)
-        logger.info(f'Successfully reloaded level: {self.level_name}')
-
-    async def run(self): 
-        try: 
-            while self.running: 
-                self.handle_event()
-                self.update()
-                self.draw()
-                await asyncio.sleep(0)
-        except (KeyboardInterrupt, asyncio.CancelledError): 
-            logger.info('KeyboardInterrupt recorded... exiting now') 
-        except Exception as ex: 
-            logger.error(f'Error encounted in main game loop', ex) 
-
-        pg.quit()
-        print('Successfully exited program ...') 
-
-    def draw(self): 
-        self.pc.frame.fill((0,0,0))
+    def draw(self, surf): 
         if self.state == App.State.Menu: 
-            self.pc.frame.fill(WHITE)
-            self.draw_menu(self.pc.frame)
+            surf.fill(WHITE)
+            self.draw_menu(surf)
 
         elif self.state == App.State.Lore: 
-            self.draw_lore(self.pc.frame) 
+            self.draw_lore(surf) 
 
         elif self.state in { App.State.Setup, App.State.Running, App.State.Gameover, App.State.Win, App.State.Editing }: 
-            self.camera.draw(self.pc.frame, self.player, self.grid, self.items, self.obstacles, self.pm)
+            self.camera.draw(surf, self.player, self.grid, self.items, self.obstacles, self.pm)
 
             if self.state == App.State.Gameover: 
-                self.draw_gameover(self.pc.frame)
+                self.draw_gameover(surf)
 
             elif self.state == App.State.Setup: 
-                self.draw_setup(self.pc.frame)
+                self.draw_setup(surf)
 
             elif self.state == App.State.Win: 
-                self.draw_win(self.pc.frame)
+                self.draw_win(surf)
 
             if self.state in {App.State.Running, App.State.Gameover, App.State.Setup}:
-                self.draw_timer(self.pc.frame)
-
-        # print_debug(self.pc.frame, self.fsr)
-
-        self.pc.finish_drawing_frame()
+                self.draw_timer(surf)
 
     def draw_timer(self, surf): 
         s = f'{(self.last_updated_time-self.start_time):.2f}s' 
@@ -592,7 +531,6 @@ class App:
         self.fsr.render(surf, Dialogue(s, rect), (3, 0, 158))
         surf.blit(self.am.get_sprite(ASN.RightClick), (WIDTH//2 + 6, y+h - 10 - 12))
 
-
     def draw_menu(self, surf: pg.Surface): 
         asset = self.am.get_sprite(ASN.Title)
         w, h = asset.get_size()
@@ -601,7 +539,7 @@ class App:
         self.sm.draw(surf)
 
     def draw_lore(self, surf): 
-        self.pc.frame.fill(WHITE)
+        surf.fill(WHITE)
         pad = LORE_PADDING
         lore_bounds_y = (HEIGHT - (self.fsr.sprite_h + pad) * len(self.lore)) // 2
         for idx, s in enumerate(self.lore[:self.lore_idx+1]):
@@ -626,21 +564,7 @@ class App:
             rect = pg.Rect(WIDTH//4*3-l//2, HEIGHT - 2 - 2*sh, l, sh)
             self.fsr.render(surf, Dialogue(s, rect), (3, 0,158))
             surf.blit(self.am.get_sprite(ASN.RightClick), (WIDTH//4*3-l//2-2-16, HEIGHT-5-sh*2))
-
-    # 1pt = .1 sec below 2 min ( if player won only )
-    # 3pt = 1 snow collected
-    # -5pt = damage
-    def get_score(self):
-        time_score = 0 
-        if self.state == App.State.Win:
-            time_score = 2 * 60 * 10 - int((self.last_updated_time - self.start_time) * 10)
-        damage_score = -5 * self.damaged_count
-        snow_score = self.snow_collected
-
-        total_score = time_score + snow_score + damage_score
-        return clamp(total_score, total_score+1, 0)
-
-
+ 
     def update(self): 
         self.pm.update() 
 
@@ -698,10 +622,163 @@ class App:
             self.change_state(App.State.Gameover) 
             logger.debug(f'GAMEOVER ... you died after {(time()-self.start_time):.2f} seconds')
 
+    def handle_event_mouse_button_up(self, button, mpos): 
+        node = self.sm.get_node(mpos)
+        if self.state == App.State.Menu: 
+            if node is not None: 
+                if self.sm.current_scene == 'main-menu': 
+                    if node.tag == 'Play': 
+                        self.sm.change_scene(None, mpos)
+                        self.load_level('main') if self.lore_played else self.init_lore()
+
+                    elif node.tag == 'Quit': 
+                        self.running = False
+
+        elif self.state == App.State.Lore: 
+            if button in { pg.BUTTON_LEFT, pg.BUTTON_RIGHT }: 
+                self.lore_idx = increment_to_limit(self.lore_idx, len(self.lore)) 
+                if self.lore_idx is None: 
+                    self.change_state(App.State.Setup)
+
+                    if button == pg.BUTTON_RIGHT: 
+                        self.load_level('main')
+                    else: 
+                        self.load_level('tutorial')
+
+        if self.state in { App.State.Gameover, App.State.Win }:
+            if button == pg.BUTTON_RIGHT: 
+                self.reset()
+                self.change_state(App.State.Menu) 
+                self.sm.change_scene('main-menu', mpos)
+
+            if button == pg.BUTTON_LEFT: 
+                if self.state == App.State.Win: 
+                    if self.level_name == 'tutorial': 
+                        self.level_name = 'main'
+                self.reset()
+                self.change_state(App.State.Setup)
+                                    
+
+        self.pm.add_particle(
+            PulseParticle(
+                pos=Vector(mpos[0], mpos[1]), vel=Vector(0,0), 
+                timer=30, color=(117, 138, 255), rad=4
+            )
+        ) 
+
+    def handle_event_mouse_motion(self, mpos): 
+        node = self.sm.get_node(mpos)
+        if node is None: 
+            self.sm.clear_node_state()  
+        else: 
+            self.sm.hover(node) 
+
+    def handle_event_key_down(self, key): 
+        if key in {pg.K_w, pg.K_a, pg.K_s, pg.K_d}: 
+            if self.state in App.State.Setup: 
+                self.change_state(App.State.Running)
+                self.player.last_inc = time() 
+
+    def change_state(self, new_state): 
+        self.state =  new_state
+        debug['state'] = new_state
+
+    def load_level(self, name): 
+        self.level_name = name
+        level = levels[name]
+        cols, rows = level['grid_dims']
+        player_pos = grid_index_to_coords_centered(level['player_pos'], CELL_W)
+        
+        self.grid = Grid(cols=cols, rows=rows, debug=False)
+        self.camera = Camera((player_pos[0] - WIDTH//2, player_pos[1] - HEIGHT//2), self.grid.get_dims())
+        self.player = Player(player_pos, self.camera, self.grid.get_dims_pixels(), speed=1) 
+
+        possible_items = [ ASN.Scarf, ASN.Hat, ASN.Buttons, ASN.Carrot, ASN.Coal ]
+        for i in range(5): 
+            item_type = choice(possible_items)
+            possible_items.remove(item_type)
+            self.items.append(
+                Item(grid_index_to_coords_centered(level['items'][i], CELL_W), asset=self.am.get_sprite(item_type))
+            )
+
+        trees = [ ASN.Tree1, ASN.Tree2, ASN.Tree3 ]
+        self.obstacles = [
+            Obstacle(grid_index_to_coords_centered(pos, CELL_W), self.am.get_sprite(choice(trees))) 
+            for pos in level['obstacles'] 
+        ]
+        self.start_time = time() 
+        self.last_updated_time = self.start_time
+        self.state = App.State.Setup
+
+    def reset(self): 
+        if self.level_name is not None: 
+            self.load_level(self.level_name)
+        logger.info(f'Successfully reloaded level: {self.level_name}')
+
+    # 1pt = .1 sec below 2 min ( if player won only )
+    # 3pt = 1 snow collected
+    # -5pt = damage
+    def get_score(self):
+        time_score = 0 
+        if self.state == App.State.Win:
+            time_score = 2 * 60 * 10 - int((self.last_updated_time - self.start_time) * 10)
+        damage_score = -5 * self.damaged_count
+        snow_score = self.snow_collected
+
+        total_score = time_score + snow_score + damage_score
+        return clamp(total_score, total_score+1, 0)
+
+
+class App: 
+    class State: 
+        Menu = 'Menu'
+        Setup = 'Setup'
+        Lore = 'Lore'
+        Running = 'Running'
+        Gameover = 'Gameover'
+        Win = 'Win'
+        Editing = 'Editing'
+
+    def __init__(self): 
+        self.pc = PygameContext((WIDTH, HEIGHT), 'Snowball Effect', icon_path='assets/icon-1024.png')
+        self.running = True
+        self.pm = ParticleManager()
+        self.game = Game(self.pm)
+        self.mouse = Mouse(rad=4, outline_color=(117, 138, 255), particles_color=(117, 138, 255), fill_color=(117, 138, 255), click_particles=True, particle_timer=30)
+        
+    async def run(self): 
+        try: 
+            while self.running and self.game.running: 
+                self.handle_event()
+                self.update()
+                self.draw()
+                await asyncio.sleep(0)
+
+        except (KeyboardInterrupt, asyncio.CancelledError): 
+            logger.info('KeyboardInterrupt recorded... exiting now') 
+
+        except Exception as ex: 
+            logger.error(f'Error encounted in main game loop', ex) 
+
+        pg.quit()
+        print('Successfully exited program ...') 
+
+    def draw(self): 
+        self.pc.frame.fill((0,0,0))
+        self.game.draw(self.pc.frame) 
+        self.pm.draw(self.pc.frame)
+        self.mouse.draw(self.pc.frame)
+        self.pc.finish_drawing_frame()
+
+    def update(self): 
+        self.game.update()
+        self.pm.update()
+        self.mouse.update(self.pc.get_event_context().mouse_pos)
+
     def handle_event(self):     
-        mx, my = self.pc.get_event_context().mouse_pos
-        wasd = {pg.K_w, pg.K_a, pg.K_s, pg.K_d}
+        mpos = self.pc.get_event_context().mouse_pos
         for event in pg.event.get(): 
+            self.mouse.handle_event(event, self.pm)
             if event.type == pg.QUIT: 
                 self.running = False 
 
@@ -709,83 +786,16 @@ class App:
                 self.pc.update_screen_dims(event.w, event.h)
 
             elif event.type == pg.MOUSEMOTION: 
-                node = self.sm.get_node((mx, my))
-                if node is None: 
-                    self.sm.clear_node_state()  
-                else: 
-                    self.sm.hover(node)
-
-            elif event.type == pg.KEYUP: 
-                pass
-                # if event.key == pg.K_ESCAPE: 
-                #     if self.state == App.State.Running: 
-                #         self.change_state(App.State.Editing)
-                #         self.picked = []
-
-                # elif event.key == pg.K_SPACE: 
-                #     if self.state == App.State.Editing: 
-                #         logger.debug(f'{self.picked}')
-                #         self.change_state(App.State.Running)
+                self.game.handle_event_mouse_motion(mpos)
 
             elif event.type == pg.KEYDOWN: 
-                if event.key in wasd: 
-                    if self.state in App.State.Setup: 
-                        self.change_state(App.State.Running)
-                        self.player.last_inc = time()
+                self.game.handle_event_key_down(event.key)
 
             elif event.type == pg.MOUSEBUTTONUP: 
-                logger.debug(f'Mouse clicked at ({mx:.{2}f}, {my:.{2}f}),{coords_to_grid_index((mx, my), CELL_W)}')
-                node = self.sm.get_node((mx, my))
-                if self.state == App.State.Menu: 
-                    if node is not None: 
-                        if self.sm.current_scene == 'main-menu': 
-                            if node.tag == 'Play': 
-                                self.sm.change_scene(None, (mx, my))
-                                self.load_level('main') if self.lore_played else self.init_lore()
+                logger.debug(f'Mouse clicked at ({mpos[0]:.{2}f}, {mpos[1]:.{2}f}), {coords_to_grid_index(mpos, CELL_W)}')
+                self.game.handle_event_mouse_button_up(event.button, mpos)
 
-                            elif node.tag == 'Quit': 
-                                self.running = False
-
-                # elif self.state == App.State.Editing: 
-                #     pos = coords_to_grid_index((mx, my), CELL_W)
-                #     j, i = self.camera.get_tile_range()
-                #     self.picked.append((pos[0]+j, pos[1]+i))
-
-                elif self.state == App.State.Lore: 
-                    if event.button in { pg.BUTTON_LEFT, pg.BUTTON_RIGHT }: 
-                        self.lore_idx = increment_to_limit(self.lore_idx, len(self.lore)) 
-                        if self.lore_idx is None: 
-                            self.change_state(App.State.Setup)
-
-                            if event.button == pg.BUTTON_RIGHT: 
-                                self.load_level('main')
-                            else: 
-                                self.load_level('tutorial')
-
-                if self.state in { App.State.Gameover, App.State.Win }:
-                    if event.button == pg.BUTTON_RIGHT: 
-                        self.reset()
-                        self.change_state(App.State.Menu) 
-                        self.sm.change_scene('main-menu', (mx, my))
-
-                    if event.button == pg.BUTTON_LEFT: 
-                        if self.state == App.State.Win: 
-                            if self.level_name == 'tutorial': 
-                                self.level_name = 'main'
-                        self.reset()
-                        self.change_state(App.State.Setup)
-                                           
-
-                self.pm.add_particle(
-                    PulseParticle(
-                        pos=Vector(mx, my), vel=Vector(0,0), 
-                        timer=30, color=(117, 138, 255), rad=4
-                    )
-                )
-
-    def change_state(self, new_state): 
-        self.state =  new_state
-        debug['state'] = new_state
+   
 
 if __name__ == '__main__': 
     app = App()

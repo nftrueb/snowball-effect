@@ -57,7 +57,7 @@ atlas_offset = {
     ASN.Buttons: (128, 0, 16, 16),
     ASN.Scarf: (144, 0, 16, 16), 
 
-    ASN.Title: (80, 16, 185, 13)
+    ASN.Title: (0, 99, 186, 13)
 }
 
 def init_ui(fsr: FontSpriteWriter, assets) -> SceneManager: 

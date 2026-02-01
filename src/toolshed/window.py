@@ -1,3 +1,4 @@
+import os
 import pygame as pg 
 from dataclasses import dataclass 
 from typing import Tuple
@@ -14,17 +15,21 @@ class EventContext:
     mouse_pos: Tuple[float, float] = (0,0)
 
 class PygameContext: 
-    def __init__(self, base_dims, title='Toolshed Window', icon_path=None, fps=60, screen_info_pkg=True): 
+    def __init__(self, base_dims, title='Toolshed Window', icon_path=None, fps=60): 
         pg.init()
 
         # record the base dimensions as separate vars 
         self.base_dims = base_dims
 
         # get monitor info and record the scale and screen dimensions
-        if screen_info_pkg: 
-            from screeninfo import get_monitors
+        logger.debug(f'UNAME: {os.uname().sysname}')
+        if os.uname().sysname.startswith('Emscripten'): 
+            info = pg.display.Info()
+            self.scale = get_window_scale(base_dims, (info.current_w * .7, info.current_h))
 
-            monitors = get_monitors()
+        else: 
+            import screeninfo 
+            monitors = screeninfo.get_monitors()
             target_monitor_idx = 1 if len(monitors) > 1 else 0
             target_monitor_dims = (monitors[target_monitor_idx].width, monitors[target_monitor_idx].height)
             logger.info(f'Using monitor dimensions: {target_monitor_dims}')
@@ -34,11 +39,7 @@ class PygameContext:
             max_scale_dims = [target_monitor_dims[0], target_monitor_dims[1]]
             idx = 0 if horiz < vert else 1
             max_scale_dims[idx] *= 0.7
-            self.scale = get_window_scale(base_dims, tuple(max_scale_dims))
-
-        else: 
-            info = pg.display.Info()
-            self.scale = get_window_scale(base_dims, (info.current_w * .7, info.current_h))
+            self.scale = get_window_scale(base_dims, tuple(max_scale_dims))            
 
         self.scaled_dims = (base_dims[0] * self.scale, base_dims[1] * self.scale)
         self.screen_dims = self.scaled_dims
