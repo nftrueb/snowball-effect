@@ -6,111 +6,24 @@ from typing import List
 
 import pygame as pg
 
-from toolshed import get_logger
+from toolshed import get_logger, debug, print_debug
 from toolshed.window import PygameContext
 from toolshed.font import FontSpriteWriter, Dialogue
 from toolshed.vector import Vector
 from toolshed.particles import ParticleManager, PulseParticle, CircParticle, EllipseParticle
 from toolshed.mouse import Mouse
+from toolshed.atlas import AtlasManager
+from toolshed.varhelpers import increment_to_limit, decrement_to_limit, clamp, clamp_upper, multiply_tuple_by_int
 
 from utils import *
 
 logger = get_logger()
-
-
-# TOOLSHED FUNCTIONS
-# Toolshed Idea: Frame Counter Singleton for implementing game logic every n frames
-class AtlasManager:
-    def __init__(self, sprite_sheet: pg.Surface, offsets): 
-        self.sprite_sheet = sprite_sheet 
-        self.offsets = offsets
-
-    def get_sprite(self, sprite_name) -> pg.Surface: 
-        return self.sprite_sheet.subsurface(self.offsets[sprite_name]) 
-    
-    def get_atlas(self): 
-        return self.sprite_sheet
-
-def increment_to_limit(value, limit):
-    if value is not None: 
-        value += 1 
-        if value >= limit: 
-            value = None 
-    return value 
-
-def decrement_to_limit(value, limit=0):
-    if value is not None: 
-        value -= 1 
-        if value <= limit: 
-            value = None 
-    return value 
-
-def coords_to_grid_index(pos, cell_w): 
-    return int(pos[0]) // cell_w, int(pos[1]) // cell_w
 
 def grid_index_to_coords_centered(pos, cell_w): 
     scaled = list(multiply_tuple_by_int(pos, CELL_W))
     scaled[0] += CELL_W // 2
     scaled[1] += CELL_W // 2 
     return tuple(scaled)
-
-def multiply_tuple_by_int(tup, scalar, idx=None): 
-    if idx is None: 
-        return tuple([value * scalar for value in tup])
-    
-    if idx >= len(tup) or idx < 0: 
-        logger.error(f'Invalid args when multipying tuple by scalar: tuple={tup} scalar={scalar} idx={idx}')
-        return tup 
-    
-    l = list(tuple)
-    l[idx] *= scalar 
-    return tuple(l)
-
-def clamp(value, upper, lower=0): 
-    if value > upper: 
-        return upper 
-    if value < lower: 
-        return lower
-    return value
-
-debug = {}
-def print_debug(surf: pg.Surface, fsr: FontSpriteWriter, color=(0,0,0)): 
-    i = 0 
-    for k, v in debug.items(): 
-        s = str(k)
-        if v is not None: 
-            s += f': {v}'
-        w, h = fsr.sprite_w, fsr.sprite_h
-        fsr.render(surf, Dialogue(s, pg.Rect(1, (h+1)*i, len(s)*w, h)), color)
-        i += 1
-
-# END NEW TOOLSHED FUNCTIONS 
-
-# FROM TRAILS APP - src/utils.py
-# returns (flipx, flipy, x, y)
-# flipx = collided on x-axis and caller can decide to flip velx
-# flipy = collided on y-axis and caller can decide to flip vely
-# x = x coord of rect that ball collided with 
-# y = y coord of rect that ball collided with 
-def collide_circ_and_bounding_rect(x, y, rad, rect: pg.Rect) -> bool: 
-    # vertical sides 
-    if rect.x - rad <= x <= rect.x + rect.w + rad and rect.y <= y <= rect.y + rect.h:
-        # check if x is overlapping on the left or right side of the hitbox
-        if x + rad < rect.x + rect.w//2: 
-            return (True, False, rect.x - rad, y)
-        
-        return (True, False, rect.x+rect.w + rad, y)
-
-    # horizontal sides
-    if rect.y - rad <= y <= rect.y + rect.h + rad and rect.x <= x <= rect.x + rect.w: 
-        # check if y is overlapping on the upper or lower side of the hitbox
-        if y + rad < rect.y + rect.h//2: 
-            return (False, True, x, rect.y - rad)
-         
-        return (False, True, x, rect.y+rect.h + rad)
-
-    return (False, False, x, y)
-
 
 class Cell: 
     def __init__(self, pos): 
@@ -225,13 +138,13 @@ class Camera:
         logger.debug(f'Initialized Camera with pos: {self.x, self.y} and grid_dims: {grid_dims}')
 
     def get_tile_range(self): 
-        j = clamp(self.x, (self.grid_dims[0] - COLS) * CELL_W) // CELL_W
-        i = clamp(self.y, (self.grid_dims[1] - ROWS) * CELL_W) // CELL_W
+        j = clamp(self.x, upper=(self.grid_dims[0] - COLS) * CELL_W, lower=0) // CELL_W
+        i = clamp(self.y, upper=(self.grid_dims[1] - ROWS) * CELL_W, lower=0) // CELL_W
         return int(j), int(i)
     
     def draw(self, surf: pg.Surface, p: Player, g: Grid, items: List[Item], obstacles: List[Obstacle], pm: ParticleManager): 
-        clampedx = clamp(self.x, (self.grid_dims[0] - COLS) * CELL_W)
-        clampedy = clamp(self.y, (self.grid_dims[1] - ROWS) * CELL_W)
+        clampedx = clamp(self.x, upper=(self.grid_dims[0] - COLS) * CELL_W, lower=0)
+        clampedy = clamp(self.y, upper=(self.grid_dims[1] - ROWS) * CELL_W, lower=0)
 
         j, i = self.get_tile_range()
         extra_j = 0 if j == self.grid_dims[0] - COLS else 1
@@ -279,10 +192,6 @@ class Camera:
             w, h = ob.asset.get_size()
             surf.blit(ob.asset, (pos[0] - w//2, pos[1] - h//2))
 
-        # draw particles that go under player 
-        # for particle in filter(lambda x: isinstance(x, EllipseParticle), pm.particles): 
-        #     particle.draw(surf)
-
         # draw player
         color = WHITE
         if p.iframes is not None:
@@ -314,7 +223,7 @@ def collide_player_obstacle(player: Player, ob: Obstacle):
 def consume_snow(player: Player, grid: Grid, pm: ParticleManager, am: AtlasManager): 
     pos = player.pos() 
     px, py = pos
-    j, i = coords_to_grid_index(pos, CELL_W)
+    j, i = (int(pos[0]) // CELL_W, int(pos[1]) // CELL_W)
     tile = grid.get_cell((j, i))
     if tile is None or not tile.has_snow:
         return 
@@ -332,38 +241,22 @@ def consume_snow(player: Player, grid: Grid, pm: ParticleManager, am: AtlasManag
     return False 
         # logger.debug(f'Player radius grew to {player.rad}')
 
-        # h = player.rad/2
-        # pm.add_particle(
-        #     EllipseParticle(
-        #         pos=Vector(player.x, player.y+player.rad-h//2), 
-        #         vel=Vector(0,0), 
-        #         timer=30, 
-        #         color=(117, 138, 255), 
-        #         w=player.rad, 
-        #         h=player.rad/2, 
-        #         w_inc=0.3, 
-        #         h_inc=0
-        #     )
-        # )
-
 def update_camera_and_player_pos(c: Camera, p: Player): 
     old_pos = p.pos()
     p.update()
     c.update(old_pos, p.pos())
     debug['p-pos'] = f'{(p.pos())}'
 
-APP_INITIALIZED = False
+class App: 
+    class State:
+        Menu = 'Menu'
+        Setup = 'Setup'
+        Lore = 'Lore'
+        Running = 'Running'
+        Gameover = 'Gameover'
+        Win = 'Win'
+        Editing = 'Editing'
 
-class GameState: 
-    Menu = 'Menu'
-    Setup = 'Setup'
-    Lore = 'Lore'
-    Running = 'Running'
-    Gameover = 'Gameover'
-    Win = 'Win'
-    Editing = 'Editing'
-
-class Game: 
     def __init__(self, pm: ParticleManager): 
         self.running = True 
         self.state = App.State.Menu
@@ -726,77 +619,63 @@ class Game:
         snow_score = self.snow_collected
 
         total_score = time_score + snow_score + damage_score
-        return clamp(total_score, total_score+1, 0)
+        return clamp_upper(total_score, total_score+1)
 
 
-class App: 
-    class State: 
-        Menu = 'Menu'
-        Setup = 'Setup'
-        Lore = 'Lore'
-        Running = 'Running'
-        Gameover = 'Gameover'
-        Win = 'Win'
-        Editing = 'Editing'
+async def run(): 
+    pc = PygameContext((WIDTH, HEIGHT), 'Snowball Effect', icon_path='assets/icon-1024.png')
+    running = True
+    pm = ParticleManager()
+    app = App(pm)
+    mouse = Mouse(
+        rad=4, 
+        outline_color=(117, 138, 255), 
+        particles_color=(117, 138, 255), 
+        fill_color=(117, 138, 255), 
+        click_particles=True, 
+        particle_timer=30
+    )
 
-    def __init__(self): 
-        self.pc = PygameContext((WIDTH, HEIGHT), 'Snowball Effect', icon_path='assets/icon-1024.png')
-        self.running = True
-        self.pm = ParticleManager()
-        self.game = Game(self.pm)
-        self.mouse = Mouse(rad=4, outline_color=(117, 138, 255), particles_color=(117, 138, 255), fill_color=(117, 138, 255), click_particles=True, particle_timer=30)
-        
-    async def run(self): 
-        try: 
-            while self.running and self.game.running: 
-                self.handle_event()
-                self.update()
-                self.draw()
-                await asyncio.sleep(0)
+    try: 
+        while running and app.running: 
+            mpos = pc.get_event_context().mouse_pos
+            for event in pg.event.get(): 
+                mouse.handle_event(event, pm)
+                if event.type == pg.QUIT: 
+                    running = False 
 
-        except (KeyboardInterrupt, asyncio.CancelledError): 
-            logger.info('KeyboardInterrupt recorded... exiting now') 
+                elif event.type == pg.VIDEORESIZE: 
+                    pc.update_screen_dims(event.w, event.h)
 
-        except Exception as ex: 
-            logger.error(f'Error encounted in main game loop', ex) 
+                elif event.type == pg.MOUSEMOTION: 
+                    app.handle_event_mouse_motion(mpos)
 
-        pg.quit()
-        print('Successfully exited program ...') 
+                elif event.type == pg.KEYDOWN: 
+                    app.handle_event_key_down(event.key)
 
-    def draw(self): 
-        self.pc.frame.fill((0,0,0))
-        self.game.draw(self.pc.frame) 
-        self.pm.draw(self.pc.frame)
-        self.mouse.draw(self.pc.frame)
-        self.pc.finish_drawing_frame()
+                elif event.type == pg.MOUSEBUTTONUP: 
+                    logger.debug(f'Mouse clicked at ({mpos[0]:.{2}f}, {mpos[1]:.{2}f})')
+                    app.handle_event_mouse_button_up(event.button, mpos)
+            
+            app.update()
+            pm.update()
+            mouse.update(pc.get_event_context().mouse_pos)
 
-    def update(self): 
-        self.game.update()
-        self.pm.update()
-        self.mouse.update(self.pc.get_event_context().mouse_pos)
+            pc.frame.fill((0,0,0))
+            app.draw(pc.frame) 
+            pm.draw(pc.frame)
+            mouse.draw(pc.frame)
+            pc.finish_drawing_frame()
+            await asyncio.sleep(0) 
 
-    def handle_event(self):     
-        mpos = self.pc.get_event_context().mouse_pos
-        for event in pg.event.get(): 
-            self.mouse.handle_event(event, self.pm)
-            if event.type == pg.QUIT: 
-                self.running = False 
+    except (KeyboardInterrupt, asyncio.CancelledError): 
+        logger.info('KeyboardInterrupt recorded... exiting now') 
 
-            elif event.type == pg.VIDEORESIZE: 
-                self.pc.update_screen_dims(event.w, event.h)
+    except Exception as ex: 
+        logger.error(f'Error encounted in main game loop', ex) 
 
-            elif event.type == pg.MOUSEMOTION: 
-                self.game.handle_event_mouse_motion(mpos)
-
-            elif event.type == pg.KEYDOWN: 
-                self.game.handle_event_key_down(event.key)
-
-            elif event.type == pg.MOUSEBUTTONUP: 
-                logger.debug(f'Mouse clicked at ({mpos[0]:.{2}f}, {mpos[1]:.{2}f}), {coords_to_grid_index(mpos, CELL_W)}')
-                self.game.handle_event_mouse_button_up(event.button, mpos)
-
-   
+    pg.quit()
+    print('Successfully exited program ...') 
 
 if __name__ == '__main__': 
-    app = App()
-    asyncio.run(app.run())
+    asyncio.run(run())
