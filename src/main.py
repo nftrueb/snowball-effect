@@ -214,7 +214,7 @@ class Camera:
         self.y += new_pos[1] - old_pos[1]
 
 def collide_player_item(p: Player, item: Item):
-    return (p.x - item.pos[0])**2 + (p.y - item.pos[1])**2 + item.r < p.rad * 1.1
+    return (p.x - item.pos[0])**2 + (p.y - item.pos[1])**2 < (p.rad - item.r*.5)**2
 
 def collide_player_obstacle(player: Player, ob: Obstacle): 
     # flipx, flipy, _, _ = collide_circ_and_bounding_rect(player.x, player.y, player.rad, ob.col_box)
@@ -304,12 +304,14 @@ class App:
         # editor vars
         self.picked = []
 
+        self.load_level('tutorial')
+
     def init_lore(self): 
         self.state = App.State.Lore 
         self.lore_idx = 0
         self.lore_played = True
 
-    def draw(self, surf): 
+    def draw(self, surf: pg.Surface): 
         if self.state == App.State.Menu: 
             surf.fill(WHITE)
             self.draw_menu(surf)
@@ -332,8 +334,21 @@ class App:
             if self.state in {App.State.Running, App.State.Gameover, App.State.Setup}:
                 self.draw_timer(surf)
 
+            # draw obtained items or silhouettes 
+            pad = 2 
+            w, _ = self.items[0].asset.get_size()
+            for idx, item in enumerate(self.items): 
+                asset = item.asset
+                if item.active: 
+                    asset = pg.mask.from_surface(item.asset)
+                    asset.invert()
+                    asset = asset.to_surface()
+                    asset.set_colorkey((255,255,255))
+                    # asset.fill((0,0,0), special_flags=pg.BLEND_RGB_MULT)
+                surf.blit(asset, (pad + (w+pad)*idx, pad))
+
     def draw_timer(self, surf): 
-        s = f'{(self.last_updated_time-self.start_time):.2f}s' 
+        s = f'{(self.last_updated_time-self.start_time):.2f}' 
         sw, sh = self.fsr.sprite_w, self.fsr.sprite_h
         l = len(s) * sw
         rect = pg.Rect(WIDTH-l-1, 1, l, sh+1)
@@ -582,12 +597,13 @@ class App:
         cols, rows = level['grid_dims']
         player_pos = grid_index_to_coords_centered(level['player_pos'], CELL_W)
         
-        self.grid = Grid(cols=cols, rows=rows, debug=False)
+        self.grid = Grid(cols=cols, rows=rows, debug=True)
         self.camera = Camera((player_pos[0] - WIDTH//2, player_pos[1] - HEIGHT//2), self.grid.get_dims())
         self.player = Player(player_pos, self.camera, self.grid.get_dims_pixels(), speed=1) 
 
+        self.items = []
         possible_items = [ ASN.Scarf, ASN.Hat, ASN.Buttons, ASN.Carrot, ASN.Coal ]
-        for i in range(5): 
+        for i in range(ITEMS_COUNT): 
             item_type = choice(possible_items)
             possible_items.remove(item_type)
             self.items.append(
@@ -599,6 +615,7 @@ class App:
             Obstacle(grid_index_to_coords_centered(pos, CELL_W), self.am.get_sprite(choice(trees))) 
             for pos in level['obstacles'] 
         ]
+        self.obtained_items = [ False for _ in range(ITEMS_COUNT) ]
         self.start_time = time() 
         self.last_updated_time = self.start_time
         self.state = App.State.Setup
@@ -623,6 +640,8 @@ class App:
 
 
 async def run(): 
+    print(set(levels['main']['obstacles']))
+
     pc = PygameContext((WIDTH, HEIGHT), 'Snowball Effect', icon_path='assets/icon-1024.png')
     running = True
     pm = ParticleManager()
